@@ -1,0 +1,71 @@
+/*
+ * TouchNetix aXiom Touchscreen Driver
+ *
+ * Copyright (C) 2020-2023 TouchNetix Ltd.
+ *
+ * Author(s): Mark Satterthwaite <mark.satterthwaite@touchnetix.com>
+ *            Pedro Torruella <pedro.torruella@touchnetix.com>
+ *            Bart Prescott <bartp@baasheep.co.uk>
+ *            Hannah Rossiter <hannah.rossiter@touchnetix.com> 
+ *
+ * This program is free software; you can redistribute  it and/or modify it
+ * under  the terms of  the GNU General  Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
+ *
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "bcm,bcm2835", "bcm,bcm2708", "bcm,bcm2709";
+
+	fragment@0 {
+		target = <&spidev0>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@1 {
+		target = <&spidev1>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	fragment@2 {
+		target = <&gpio>;
+		__overlay__ {
+			axiom_pins: axiom_pins {
+				brcm,pins = <24>; /* GEN5 on GPIO24 (on Pi Header Pin 18) */
+				brcm,function = <0>; /* in */
+				brcm,pull = <0>; /* 0 - none, 1 - down, 2 - up : https://github.com/torvalds/linux/blob/master/Documentation/devicetree/bindings/pinctrl/brcm%2Cbcm2835-gpio.txt */
+			};
+		};
+	};
+
+	fragment@3 {
+		target = <&spi0>;
+		__overlay__ {
+			status = "okay";
+			#address-cells = < 0x01 >;
+			#size-cells = < 0x00 >;
+			axiom_spi@0 {
+				compatible = "axiom_spi_drv,axiom";
+				reg = < 0x00 >; /* nCE0 on GPIO8 (on Pi Header pin 24) */
+				#address-cells = < 0x01 >;
+				#size-cells = < 0x00 >;
+				spi-max-frequency = < 4000000 >;
+				pinctrl-names = "default";
+				interrupt-parent = < &gpio >;
+				interrupts = < 24 8 >; /* <GPIO Flags> Flags: 1 = lo-to-hi, 2 = hi-to-lo, 4 = active high, 8 = active low  */
+				status = "okay";
+			};
+		};
+	};
+
+};
+
+
