@@ -1,4 +1,4 @@
-# aXiom Linux Kernel Module - Linux interface for aXiom devices
+# aXiom Linux Kernel Module
 
 ## Synopsis
 
@@ -227,7 +227,7 @@ To interface with the provided kernel module, the aXiom usb bridge must be set t
 #### I2C Connection
 
 The I2C address must be set by the I2CADDR jumpers on the EVK.
-The default address is 0x66 and the alternative address is 0x67. The axiom-i2c_overlay.dts file must be set to match the chosen address.
+The default address is 0x66 and the alternative address is 0x67. The axiom_i2c_overlay.dts file must be set to match the chosen address.
 Note: If the "I2CADDR" header is left unpopulated, then the aXiom will respond on address 0x67.
 The `i2cdetect` utility can be used to discover the address of the connected device.
 
