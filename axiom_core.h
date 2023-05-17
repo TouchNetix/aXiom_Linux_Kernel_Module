@@ -148,30 +148,27 @@ struct axiom_data_core
     u16 (*pAxiomWriteUsage)(void *pAxiomData, u8 usage, u8 page, u16 length, u8 *pBuffer);
 };
 
-u8 axiom_get_usage_table_pages(struct axiom_data_core *data_core,
-                                    u8 id_required);
+extern void axiom_get_dev_info(struct axiom_data_core *data_core, u8 *data);
 
-void axiom_get_dev_info(struct axiom_data_core *data_core, u8 *data);
+extern u8 axiom_populate_usage_table(struct axiom_data_core *data_core, u8 *pRX_data);
 
-u8 axiom_populate_usage_table(struct axiom_data_core *data_core, u8 *pRX_data);
+extern u16 usage_to_target_address(struct axiom_data_core *data_core,
+                                   u8 usage, u8 page, u8 offset);
 
-u16 usage_to_target_address(struct axiom_data_core *data_core,
-                                u8 usage, u8 page, u8 offset);
+extern bool axiom_discover(struct axiom_data_core *data_core);
 
-bool axiom_discover(struct axiom_data_core *data_core);
+extern void axiom_rebaseline(struct axiom_data_core *data_core);
 
-void axiom_rebaseline(struct axiom_data_core *data_core);
+extern void axiom_init_data_core(struct axiom_data_core *data_core, struct device *pDev, void *pAxiomData, void *pAxiomReadUsage, void *pAxiomWriteUsage);
 
-void axiom_init_data_core(struct axiom_data_core *data_core, struct device *pDev, void *pAxiomData, void *pAxiomReadUsage, void *pAxiomWriteUsage);
+extern void axiom_remove(struct axiom_data_core *data_core);
 
-void axiom_remove(struct axiom_data_core *data_core);
+extern void axiom_process_report(struct axiom_data_core *data_core, u8 *pReport);
 
-void axiom_process_report(struct axiom_data_core *data_core, u8 *pReport);
+extern void axiom_process_u41_report(u8 *rx_buf, struct axiom_data_core *data_core);
 
-void axiom_process_u41_report(u8 *rx_buf, struct axiom_data_core *data_core);
+extern void axiom_process_u46_report(u8 *rx_buf, struct axiom_data_core *data_core);
 
-void axiom_process_u46_report(u8 *rx_buf, struct axiom_data_core *data_core);
-
-struct input_dev *axiom_register_input_subsystem(void);
+extern struct input_dev *axiom_register_input_subsystem(void);
 
 #endif  /* __AXIOM_CORE_H */

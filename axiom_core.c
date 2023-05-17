@@ -571,3 +571,21 @@ struct input_dev *axiom_register_input_subsystem(void)
     }
     return input_dev;
 }
+
+EXPORT_SYMBOL_GPL(axiom_get_dev_info);
+EXPORT_SYMBOL_GPL(axiom_populate_usage_table);
+EXPORT_SYMBOL_GPL(usage_to_target_address);
+EXPORT_SYMBOL_GPL(axiom_discover);
+EXPORT_SYMBOL_GPL(axiom_rebaseline);
+EXPORT_SYMBOL_GPL(axiom_init_data_core);
+EXPORT_SYMBOL_GPL(axiom_remove);
+EXPORT_SYMBOL_GPL(axiom_process_report);
+EXPORT_SYMBOL_GPL(axiom_process_u41_report);
+EXPORT_SYMBOL_GPL(axiom_process_u46_report);
+EXPORT_SYMBOL_GPL(axiom_register_input_subsystem);
+
+MODULE_AUTHOR("TouchNetix <support@touchnetix.com>");
+MODULE_DESCRIPTION("aXiom touchscreen core logic");
+MODULE_LICENSE("GPL");
+MODULE_ALIAS("axiom");
+MODULE_VERSION("1.0.0");

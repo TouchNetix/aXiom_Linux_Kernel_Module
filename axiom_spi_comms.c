@@ -243,7 +243,7 @@ static int axiom_spi_probe(struct spi_device *spi)
 }
 
 // purpose: Clean-up when device is disconnected
-static int axiom_spi_remove(struct spi_device *spi)
+static void axiom_spi_remove(struct spi_device *spi)
 {
     struct axiom_data *data;
     struct axiom_data_core *data_core;
@@ -261,8 +261,6 @@ static int axiom_spi_remove(struct spi_device *spi)
     axiom_remove(data_core);
 
     dev_info(&spi->dev, "Removed\n");
-
-    return 0;
 }
 
 static const struct spi_device_id axiom_spi_id_table[] = {
@@ -289,9 +287,6 @@ static struct spi_driver axiom_spi_driver = {
     },
     .probe = axiom_spi_probe,
     .remove = axiom_spi_remove,
-    //.shutdown = axiom_spi_shutdown,
-    //.suspend = axiom_spi_suspend,
-    //.resume = axiom_spi_resume
 };
 
 module_spi_driver(axiom_spi_driver);

@@ -136,7 +136,7 @@ static irqreturn_t axiom_irq(int irq, void *handle)
 
 // purpose: Function called in IRQ context when device is plugged in.
 // returns: Error code
-static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device_id *id)
+static int axiom_i2c_probe(struct i2c_client *i2cClient)
 {
     struct device *pDev = &i2cClient->dev;
     struct axiom_data *data;
@@ -213,7 +213,7 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 }
 
 // purpose: Clean-up when device is disconnected
-static int axiom_i2c_remove(struct i2c_client *i2cClient)
+static void axiom_i2c_remove(struct i2c_client *i2cClient)
 {
     struct axiom_data *data;
     struct axiom_data_core *data_core;
@@ -233,8 +233,6 @@ static int axiom_i2c_remove(struct i2c_client *i2cClient)
     axiom_remove(data_core);
     
     dev_info(&i2cClient->dev, "Removed\n");
-
-    return 0;
 }
 
 static const struct i2c_device_id axiom_i2c_id_table[] = {
@@ -261,9 +259,6 @@ static struct i2c_driver axiom_i2c_driver = {
     .id_table = axiom_i2c_id_table,
     .probe = axiom_i2c_probe,
     .remove = axiom_i2c_remove,
-    //.shutdown = axiom_i2c_shutdown,
-    //.suspend = axiom_i2c_suspend,
-    //.resume = axiom_i2c_resume
 };
 
 module_i2c_driver(axiom_i2c_driver);
