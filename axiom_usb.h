@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * TouchNetix aXiom Touchscreen Driver
  *
@@ -6,7 +7,7 @@
  * Author(s): Mark Satterthwaite <mark.satterthwaite@touchnetix.com>
  *            Pedro Torruella <pedro.torruella@touchnetix.com>
  *            Bart Prescott <bartp@baasheep.co.uk>
- *            Hannah Rossiter <hannah.rossiter@touchnetix.com> 
+ *            Hannah Rossiter <hannah.rossiter@touchnetix.com>
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -52,10 +53,10 @@
 #define HID_PAYLOAD_SIZE_AXPB009  (64)
 #define TXBUFFER_SIZE             (HID_PAYLOAD_MAXSIZE + 1)
 #define RXBUFFER_SIZE             (HID_PAYLOAD_MAXSIZE + 1)
-#define RX_PAYLOAD_MAX            (64 - HID_PAYLOAD_HEADER_SIZE) // Max transfer size of the USB bridge 
-                                                                 // interface minus the size of the USB
-                                                                 // header to account for additional info
-                                                                 // received
+#define RX_PAYLOAD_MAX            (64 - HID_PAYLOAD_HEADER_SIZE)	// Max transfer size of the USB bridge
+																	// interface minus the size of the USB
+																	// header to account for additional info
+																	// received
 
 // Used when waiting for a response from the bridge.
 // Defined in milli-seconds
@@ -63,8 +64,8 @@
 
 
 const struct hid_device_id axiom_ids[] = {
-    { HID_USB_DEVICE(AX_HID_VID, AX_HID_PID)}, // , .product=2
-    { HID_USB_DEVICE(AX_HID_VID2, AX_HID_PID)},
+	{ HID_USB_DEVICE(AX_HID_VID, AX_HID_PID)}, // , .product=2
+	{ HID_USB_DEVICE(AX_HID_VID2, AX_HID_PID)},
 };
 
 
@@ -74,26 +75,25 @@ const struct hid_device_id axiom_ids[] = {
 //          support DMA transfers. If it is desired to move this to stack, then
 //          tx_buf and rx_buf will have to be turned into pointers.
 //
-struct axiom_data
-{
-    struct axiom_data_core data_core;
+struct axiom_data {
+	struct axiom_data_core data_core;
 
-    // USB
-    struct usb_device *usbdev;
-    struct usb_interface *iface;
-    struct hid_device *hdev;
-    struct delayed_work work;
-    struct workqueue_struct *wq;
+	// USB
+	struct usb_device *usbdev;
+	struct usb_interface *iface;
+	struct hid_device *hdev;
+	struct delayed_work work;
+	struct workqueue_struct *wq;
 
-    spinlock_t datalock;
-    unsigned long irqflags;
+	spinlock_t datalock;
+	unsigned long irqflags;
 
-    int axiom_hid_payload_size;
-    u8 tx_buf[TXBUFFER_SIZE];
-    u8 rx_buf[RXBUFFER_SIZE];
-    bool proxy_active;
-    bool usb_report_available;
-    bool do_reports;
+	int axiom_hid_payload_size;
+	u8 tx_buf[TXBUFFER_SIZE];
+	u8 rx_buf[RXBUFFER_SIZE];
+	bool proxy_active;
+	bool usb_report_available;
+	bool do_reports;
 };
 
 #endif /* __AXIOM_USB_H */
