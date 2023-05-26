@@ -15,13 +15,13 @@ if [ ! ${rc} -eq 0 ]; then
 	echo make failed with error ${rc}
 	exit ${rc}
 fi
-dtc -I dts -O dtb -o axiom_spi_overlay.dtbo axiom-spi_overlay.dts
+dtc -I dts -O dtb -o axiom_spi_overlay.dtbo axiom_spi_overlay.dts
 rc=$?
 if [ ! ${rc} -eq 0 ]; then
 	echo Failed compiling SPI dtc overlay with error ${rc}
 	exit ${rc}
 fi
-dtc -I dts -O dtb -o axiom_i2c_overlay.dtbo axiom-i2c_overlay.dts
+dtc -I dts -O dtb -o axiom_i2c_overlay.dtbo axiom_i2c_overlay.dts
 rc=$?
 if [ ! ${rc} -eq 0 ]; then
 	echo Failed compiling I2C dtc overlay with error ${rc}
