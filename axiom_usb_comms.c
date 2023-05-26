@@ -261,9 +261,6 @@ static void axiom_usb_setup(struct work_struct *work)
 	u16 target_address = 0;
 	int ret = 0;
 
-	//send a command to knock the bridge out of proxy mode just in case it wasn't removed properly
-	axiom_stop_proxy(hdev, data);
-
 	hid_info(hdev, "AXIOM: aXiom-usb entering USB Setup [%s ver 0x%x]\n", hdev->name, hdev->version);
 
 	data->axiom_hid_payload_size = HID_PAYLOAD_SIZE_DEFAULT;
