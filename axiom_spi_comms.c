@@ -185,10 +185,8 @@ static int axiom_spi_probe(struct spi_device *spi)
 	// Kernel will manage this data, it will be automatically unloaded when the
 	// module is unloaded.
 	data = devm_kzalloc(&spi->dev, sizeof(*data), GFP_ATOMIC);
-	if (data == NULL) {
-		dev_err(&spi->dev, "Failed to allocate memory for aXiom data structure!\n");
+	if (data == NULL)
 		return -ENOMEM;
-	}
 
 	data_core = &data->data_core;
 	data->spi = spi;

@@ -372,10 +372,8 @@ static int axiom_usb_probe(struct hid_device *hdev,
 
 	// Get some memory that we can use within the driver.
 	data = kzalloc(sizeof(struct axiom_data), GFP_KERNEL);
-	if (data == NULL) {
-		hid_err(hdev, "Failed to allocate memory for aXiom data structure!\n");
+	if (data == NULL)
 		return -ENOMEM;
-	}
 
 	lock = &data->datalock;
 	spin_lock_init(lock);

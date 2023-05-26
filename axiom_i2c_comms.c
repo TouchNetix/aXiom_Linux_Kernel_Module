@@ -148,10 +148,8 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 	// Kernel will manage this data, it will be automatically unloaded when the
 	// module is unloaded.
 	data = devm_kzalloc(pDev, sizeof(*data), GFP_ATOMIC);
-	if (data == NULL) {
-		dev_err(pDev, "Failed to allocate memory for aXiom data structure!\n");
+	if (data == NULL)
 		return -ENOMEM;
-	}
 
 	data_core = &data->data_core;
 	data->i2cClient = i2cClient;
