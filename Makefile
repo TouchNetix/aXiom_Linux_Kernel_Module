@@ -11,5 +11,8 @@ axiom_i2c-objs := axiom_core.o axiom_i2c_comms.o
 all:
 	$(MAKE) -C $(KERNEL_LOC) M=$(PWD) modules
 
+install:
+	$(MAKE) -C $(KERNEL_LOC) M=$(PWD) modules_install
+
 clean:
 	$(MAKE) -C $(KERNEL_LOC) M=$(PWD) clean
