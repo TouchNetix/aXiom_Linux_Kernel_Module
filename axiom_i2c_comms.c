@@ -16,8 +16,6 @@
  *
  */
 
-//#define DEBUG   // Enable debug messages
-
 #include <linux/kernel.h>
 #include <linux/kobject.h>
 #include <linux/delay.h>
@@ -32,9 +30,16 @@
 #include <linux/string.h>
 #include "axiom_core.h"
 
+static bool poll_enable;
+module_param(poll_enable, bool, 0444);
+MODULE_PARM_DESC(poll_enable, "Enable polling mode [default 0=no]");
+
+static int poll_interval;
+module_param(poll_interval, int, 0444);
+MODULE_PARM_DESC(poll_interval, "Polling period in ms [default = 100]");
+
 struct axiom_data {
 	struct axiom_data_core data_core;
-
 	struct i2c_client *i2cClient;
 	bool irq_allocated; // indicates the IRQ was allocated during probe
 };
@@ -141,10 +146,12 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 	i2cFunctionality = i2c_get_functionality(i2cClient->adapter);
 	dev_info(pDev, "The i2c adapter reported functionality: 0x%08x\n", i2cFunctionality);
 
-	if (i2cClient->irq == 0) {
+	if ((i2cClient->irq == 0) &&
+			(poll_enable == 0)) {
 		dev_err(pDev, "No IRQ specified!\n");
 		return -EINVAL;
 	}
+
 	// Kernel will manage this data, it will be automatically unloaded when the
 	// module is unloaded.
 	data = devm_kzalloc(pDev, sizeof(*data), GFP_ATOMIC);
@@ -162,11 +169,14 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 
 	// Now Register with the Input Sub-System
 	//-------------------------------------------------
-	data_core->input_dev = axiom_register_input_subsystem();
+	data_core->input_dev = axiom_register_input_subsystem(poll_enable, poll_interval);
 	if (data_core->input_dev == NULL) {
 		dev_err(pDev, "Failed to register input device, error: %d\n", error);
 		return error;
 	}
+
+	input_set_drvdata(data_core->input_dev, data_core);
+
 	dev_info(pDev, "AXIOM: I2C driver registered with Input Sub-System.\n");
 	//-------------------------------------------------
 
@@ -177,15 +187,16 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 	for (target = 0; target < U41_MAX_TARGETS; target++)
 		data_core->targets[target].state = Target_State_Not_Present;
 
-	data->irq_allocated = (0 == (error = devm_request_threaded_irq(pDev, i2cClient->irq,
-										NULL, axiom_irq,
-										IRQF_TRIGGER_LOW | IRQF_ONESHOT,
-										"axiom_irq", data)));
-	if (error != 0) {
-		dev_err(pDev, "Failed to request IRQ %u (error: %d)\n", i2cClient->irq, error);
-		return error;
+	if (poll_enable == 0) {
+		data->irq_allocated = (0 == (error = devm_request_threaded_irq(pDev, i2cClient->irq,
+											NULL, axiom_irq,
+											IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+											"axiom_irq", data)));
+		if (error != 0) {
+			dev_err(pDev, "Failed to request IRQ %u (error: %d)\n", i2cClient->irq, error);
+			return error;
+		}
 	}
-
 	dev_info(pDev, "Probe End\n");
 
 	return 0;

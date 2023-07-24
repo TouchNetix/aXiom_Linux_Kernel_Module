@@ -153,6 +153,6 @@ extern void axiom_remove(struct axiom_data_core *data_core);
 extern void axiom_process_report(struct axiom_data_core *data_core, u8 *pReport);
 extern void axiom_process_u41_report(u8 *rx_buf, struct axiom_data_core *data_core);
 extern void axiom_process_u46_report(u8 *rx_buf, struct axiom_data_core *data_core);
-extern struct input_dev *axiom_register_input_subsystem(void);
+extern struct input_dev *axiom_register_input_subsystem(bool poll_enable, int poll_interval);
 
 #endif  /* __AXIOM_CORE_H */

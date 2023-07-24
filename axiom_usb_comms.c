@@ -424,7 +424,7 @@ static int axiom_usb_probe(struct hid_device *hdev,
 		goto abort;
 	}
 
-	data_core->input_dev = axiom_register_input_subsystem();
+	data_core->input_dev = axiom_register_input_subsystem(0, 0);
 	if (data_core->input_dev == NULL) {
 		hid_err(hdev, "ERROR: Failed to register input device, error: %d\n", ret);
 		goto abort;

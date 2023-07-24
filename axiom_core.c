@@ -26,6 +26,18 @@
 #include <linux/crc16.h>
 #include <linux/slab.h>
 
+/**
+ * aXiom devices are typically configured to report
+ * touches at a rate of 100Hz (10ms). For systems
+ * that require polling for reports, 100ms seems like
+ * an acceptable polling rate.
+ * When reports are polled, it will be expected to
+ * occasionally observe the overflow bit being set
+ * in the reports. This indicates that reports are not
+ * being read fast enough.
+ */
+#define POLL_INTERVAL_DEFAULT_MS	100
+
 #include "axiom_core.h"
 
 // purpose: Decodes and populates the local u31 structure.
@@ -236,6 +248,16 @@ void axiom_remove(struct axiom_data_core *data_core)
 	}
 }
 EXPORT_SYMBOL_GPL(axiom_remove);
+
+static void axiom_poll(struct input_dev *input_dev)
+{
+	struct axiom_data_core *data_core = input_get_drvdata(input_dev);
+	u8 *pRX_data = &data_core->rx_buf[0];
+
+	(*data_core->pAxiomReadUsage)(data_core->pAxiomData, 0x34, 0, data_core->max_report_len, pRX_data);
+
+	axiom_process_report(data_core, pRX_data);
+}
 
 // purpose: Support function to axiom_process_report.
 //          It validates the crc and multiplexes the axiom reports
@@ -488,7 +510,7 @@ EXPORT_SYMBOL_GPL(axiom_process_u46_report);
 
 // purpose: To register an aXiom based driver with the Input Sub-System.
 // returns: Pointer to the register input device.
-struct input_dev *axiom_register_input_subsystem(void)
+struct input_dev *axiom_register_input_subsystem(bool poll_enable, int poll_interval)
 {
 	struct input_dev *input_dev = input_allocate_device();
 	int ret = 0;
@@ -538,6 +560,17 @@ struct input_dev *axiom_register_input_subsystem(void)
 	// Declare that we support "RAW" Miscellaneous events
 	set_bit(MSC_RAW, input_dev->mscbit);
 #endif
+	if (poll_enable) {
+		ret = input_setup_polling(input_dev, axiom_poll);
+		if (ret) {
+			pr_err("Unable to set up polling: %d\n", ret);
+			return NULL;
+		}
+		if (poll_interval)
+			input_set_poll_interval(input_dev, poll_interval);
+		else
+			input_set_poll_interval(input_dev, POLL_INTERVAL_DEFAULT_MS);
+	}
 
 	ret = input_register_device(input_dev);
 	if (ret != 0) {
