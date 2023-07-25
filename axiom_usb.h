@@ -27,13 +27,13 @@
 
 // Declaration for Interface numbers
 // On TNx USB Bridges there are three interfaces implemented.
-// For details refer to: TNxD00359-A1 TNxAC-006 User Guide.pdf
-#define AX_IF_TBPCTRL             (0x0)    // TNxPB-005 TBP Control Interface
-#define AX_IF_DIGITIZER           (0x1)    // TNxPB-005 Digitizer Interface
-#define AX_IF_FORCEDATA           (0x2)    // TNxPB-005 Press Data Interface
+// For more details, refer to the relevant protocol bridge datasheet
+#define AX_IF_TBPCTRL             (0x0)    // TBP Control Interface
+#define AX_IF_DIGITIZER           (0x1)    // Digitizer Interface
+#define AX_IF_FORCEDATA           (0x2)    // Press Data Interface
 
 // TNx Touch-Bridge-Protocol Commands
-// For details refer to "TNxD00359-A1 TNxAC-006 User Guide.pdf"
+// For more details, refer to the relevant protocol bridge datasheet
 #define AX_TBP_CMD_NULL           (0x86)
 #define AX_TBP_I2C_DEVICE1        (0x51)  // Read as: issue i2c/SPI transaction to device 1.
 #define AX_TBP_I2C_DEVICE2        (0x52)  // Read as: issue i2c/SPI transaction to device 2.
