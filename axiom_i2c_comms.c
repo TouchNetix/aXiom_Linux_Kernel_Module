@@ -17,6 +17,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/version.h>
 #include <linux/kobject.h>
 #include <linux/delay.h>
 #include <linux/input.h>
@@ -130,8 +131,15 @@ static irqreturn_t axiom_irq(int irq, void *handle)
 
 // purpose: Function called in IRQ context when device is plugged in.
 // returns: Error code
+#if KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE
+static int axiom_i2c_probe(struct i2c_client *i2cClient)
+#else
 static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device_id *id)
+#endif
 {
+#if KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE
+	const struct i2c_device_id *id = i2c_client_get_device_id(i2cClient);
+#endif
 	struct device *pDev = &i2cClient->dev;
 	struct axiom_data *data;
 	struct axiom_data_core *data_core;
