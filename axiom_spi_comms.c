@@ -32,6 +32,14 @@
 #define COMMS_HEADER_LENGTH      (4U)
 #define COMMS_PADDING_LENGTH    (32U)
 
+static bool poll_enable;
+module_param(poll_enable, bool, 0444);
+MODULE_PARM_DESC(poll_enable, "Enable polling mode [default 0=no]");
+
+static int poll_interval;
+module_param(poll_interval, int, 0444);
+MODULE_PARM_DESC(poll_interval, "Polling period in ms [default = 100]");
+
 struct axiom_data {
 	struct axiom_data_core data_core;
 	struct spi_device *spi;
@@ -200,11 +208,14 @@ static int axiom_spi_probe(struct spi_device *spi)
 
 	// Now Register with the Input Sub-System
 	//-------------------------------------------------
-	data_core->input_dev = axiom_register_input_subsystem();
+	data_core->input_dev = axiom_register_input_subsystem(poll_enable, poll_interval);
 	if (data_core->input_dev == NULL) {
 		dev_err(&spi->dev, "Failed to register input device, error: %d\n", error);
 		return error;
 	}
+
+	input_set_drvdata(data_core->input_dev, data_core);
+
 	dev_info(&spi->dev, "AXIOM: SPI driver registered with Input Sub-System.\n");
 	//-------------------------------------------------
 
@@ -212,17 +223,18 @@ static int axiom_spi_probe(struct spi_device *spi)
 	for (target = 0; target < U41_MAX_TARGETS; target++)
 		data_core->targets[target].state = Target_State_Not_Present;
 
-	// Delay just a smidge before enabling the IRQ
-	udelay(data_core->bus_holdoff_delay_us);
-	data->irq_allocated = (0 == (error = devm_request_threaded_irq(&spi->dev, spi->irq,
-										NULL, axiom_irq,
-										IRQF_TRIGGER_LOW | IRQF_ONESHOT,
-										"axiom_irq", data)));
-	if (error != 0) {
-		dev_err(&spi->dev, "Failed to request IRQ %u (error: %d)\n", spi->irq, error);
-		return error;
+	if (poll_enable == 0) {
+		// Delay just a smidge before enabling the IRQ
+		udelay(data_core->bus_holdoff_delay_us);
+		data->irq_allocated = (0 == (error = devm_request_threaded_irq(&spi->dev, spi->irq,
+											NULL, axiom_irq,
+											IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+											"axiom_irq", data)));
+		if (error != 0) {
+			dev_err(&spi->dev, "Failed to request IRQ %u (error: %d)\n", spi->irq, error);
+			return error;
+		}
 	}
-
 	dev_info(&spi->dev, "Probe End\n");
 
 	return 0;
