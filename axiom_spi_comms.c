@@ -242,7 +242,7 @@ static int axiom_spi_probe(struct spi_device *spi)
 }
 
 // purpose: Clean-up when device is disconnected
-#if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
+#if (KERNEL_VERSION(5, 18, 0) > LINUX_VERSION_CODE)
 static int axiom_spi_remove(struct spi_device *spi)
 #else
 static void axiom_spi_remove(struct spi_device *spi)
@@ -264,7 +264,7 @@ static void axiom_spi_remove(struct spi_device *spi)
 
 	dev_info(&spi->dev, "Removed\n");
 
-#if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
+#if (KERNEL_VERSION(5, 18, 0) > LINUX_VERSION_CODE)
 	return 0;
 #endif
 }

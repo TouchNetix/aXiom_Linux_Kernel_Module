@@ -212,7 +212,7 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 }
 
 // purpose: Clean-up when device is disconnected
-#if(LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+#if (KERNEL_VERSION(6, 1, 0) > LINUX_VERSION_CODE)
 static int axiom_i2c_remove(struct i2c_client *i2cClient)
 #else
 static void axiom_i2c_remove(struct i2c_client *i2cClient)
@@ -234,7 +234,7 @@ static void axiom_i2c_remove(struct i2c_client *i2cClient)
 
 	dev_info(&i2cClient->dev, "Removed\n");
 
-#if(LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+#if (KERNEL_VERSION(6, 1, 0) > LINUX_VERSION_CODE)
 	return 0;
 #endif
 }
