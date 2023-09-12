@@ -27,6 +27,7 @@
 #include <linux/pm.h>
 #include <linux/spi/spi.h>
 #include <linux/string.h>
+#include <linux/version.h>
 #include "axiom_core.h"
 
 #define COMMS_HEADER_LENGTH      (4U)
@@ -241,7 +242,11 @@ static int axiom_spi_probe(struct spi_device *spi)
 }
 
 // purpose: Clean-up when device is disconnected
+#if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
+static int axiom_spi_remove(struct spi_device *spi)
+#else
 static void axiom_spi_remove(struct spi_device *spi)
+#endif
 {
 	struct axiom_data *data;
 	struct axiom_data_core *data_core;
@@ -258,6 +263,10 @@ static void axiom_spi_remove(struct spi_device *spi)
 	axiom_remove(data_core);
 
 	dev_info(&spi->dev, "Removed\n");
+
+#if(LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0))
+	return 0;
+#endif
 }
 
 static const struct spi_device_id axiom_spi_id_table[] = {

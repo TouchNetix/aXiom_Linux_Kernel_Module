@@ -29,6 +29,7 @@
 #include <linux/pm.h>
 #include <linux/i2c.h>
 #include <linux/string.h>
+#include <linux/version.h>
 #include "axiom_core.h"
 
 static bool poll_enable;
@@ -211,7 +212,11 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 }
 
 // purpose: Clean-up when device is disconnected
+#if(LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+static int axiom_i2c_remove(struct i2c_client *i2cClient)
+#else
 static void axiom_i2c_remove(struct i2c_client *i2cClient)
+#endif
 {
 	struct axiom_data *data;
 	struct axiom_data_core *data_core;
@@ -228,6 +233,10 @@ static void axiom_i2c_remove(struct i2c_client *i2cClient)
 	axiom_remove(data_core);
 
 	dev_info(&i2cClient->dev, "Removed\n");
+
+#if(LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0))
+	return 0;
+#endif
 }
 
 static const struct i2c_device_id axiom_i2c_id_table[] = {
