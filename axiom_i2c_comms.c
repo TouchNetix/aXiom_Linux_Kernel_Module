@@ -29,7 +29,6 @@
 #include <linux/pm.h>
 #include <linux/i2c.h>
 #include <linux/string.h>
-#include <linux/version.h>
 #include "axiom_core.h"
 
 static bool poll_enable;
