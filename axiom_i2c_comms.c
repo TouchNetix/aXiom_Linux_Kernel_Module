@@ -15,20 +15,9 @@
  * option) any later version.
  *
  */
-
-#include <linux/kernel.h>
-#include <linux/version.h>
-#include <linux/kobject.h>
-#include <linux/delay.h>
-#include <linux/input.h>
-#include <linux/input/mt.h>
+#include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/irqreturn.h>
-#include <linux/module.h>
-#include <linux/of.h>
-#include <linux/pm.h>
-#include <linux/i2c.h>
-#include <linux/string.h>
 #include "axiom_core.h"
 
 static bool poll_enable;
@@ -45,19 +34,34 @@ struct axiom_data {
 	bool irq_allocated; // indicates the IRQ was allocated during probe
 };
 
+void axiom_reset(struct axiom_data_core *data_core)
+{
+	gpiod_set_value_cansleep(data_core->rst_gpio, 1);
+	usleep_range(1000, 2000);
+	gpiod_set_value_cansleep(data_core->rst_gpio, 0);
+	msleep(110);
+}
+EXPORT_SYMBOL_GPL(axiom_reset);
+
 // purpose: Helper function to read a specified usage and write it into the provided buffer
 // returns: Length of the usage read
 static u16 axiom_read_usage(void *pAxiomData, u8 usage, u8 page, u16 length, u8 *pBuffer)
+{
+	u16 target_address = usage_to_target_address(&((struct axiom_data*)pAxiomData)->data_core, usage, page, 0);
+	return axiom_read_page(pAxiomData, target_address,length,pBuffer);
+}
+
+u16 axiom_read_page(void *pAxiomData, u16 target_address, u16 length, u8 *pBuffer)
 {
 	struct axiom_data *data = pAxiomData;
 	struct i2c_client *i2cClient = data->i2cClient;
 	struct device *pDev = data->data_core.pDev;
 	struct i2c_msg msg[2];
 	struct AxiomCmdHeader cmdHeader;
-	int ret;
+	int ret, i;
 
 	// Build the header
-	cmdHeader.target_address = usage_to_target_address(&data->data_core, usage, page, 0);
+	cmdHeader.target_address = target_address;
 	cmdHeader.length = length;
 	cmdHeader.read = 1;
 
@@ -70,50 +74,63 @@ static u16 axiom_read_usage(void *pAxiomData, u8 usage, u8 page, u16 length, u8 
 	msg[1].len = length;
 	msg[1].buf = (char *)pBuffer;
 
-	ret = i2c_transfer(i2cClient->adapter, msg, 2);
-	if (ret != 2) {
-		dev_err(pDev, "Failed I2C read transfer. RC:%d\n", ret);
-		return 0;
+	for (i = 0; i < 8; i++) {
+		ret = i2c_transfer(i2cClient->adapter, msg, 2);
+		if (ret == 2)
+			return length;
+
+		dev_err(pDev, "Failed I2C read page. RC:%d\n", ret);
+		udelay(data->data_core.bus_holdoff_delay_us);
 	}
 
 	//dev_dbg(pDev, "Payload Data %*ph\n", length, *pBuffer);
 	udelay(data->data_core.bus_holdoff_delay_us);
 	return length;
 }
+EXPORT_SYMBOL_GPL(axiom_read_page);
 
 // purpose: Helper function to write data in a provided buffer to a specified usage
 // returns: Length of the data to write
 static u16 axiom_write_usage(void *pAxiomData, u8 usage, u8 page, u16 length, u8 *pBuffer)
 {
+	u16 target_address = usage_to_target_address(&((struct axiom_data*)pAxiomData)->data_core, usage, page, 0);
+	return axiom_write_page(pAxiomData, target_address,length,pBuffer);
+}
+
+u16 axiom_write_page(void *pAxiomData, u16 target_address, u16 length, u8 *pBuffer)
+{
 	struct axiom_data *data = pAxiomData;
 	struct i2c_client *i2cClient = data->i2cClient;
 	struct device *pDev = data->data_core.pDev;
-	struct i2c_msg msg[2];
-	struct AxiomCmdHeader cmdHeader;
-	int ret;
+	struct i2c_msg msg[1];
+	int ret, i;
+	u8 write_buf[786];
 
-	cmdHeader.target_address = usage_to_target_address(&data->data_core, usage, page, 0);
-	cmdHeader.length = length;
-	cmdHeader.read = 0;
+	write_buf[0] = (target_address & 0x00FF);
+	write_buf[1] = (target_address & 0xFF00) >> 8;
+	write_buf[2] = (length & 0x00FF);
+	write_buf[3] = (length & 0x7F00) >> 8; // Ensure the read bit is clear
+
+	for (i = 0; i < length; i++)
+		write_buf[4 + i] = pBuffer[i];
 
 	msg[0].addr = i2cClient->addr;
 	msg[0].flags = 0;
-	msg[0].len = sizeof(cmdHeader);
-	msg[0].buf = (u8 *)&cmdHeader;
-	msg[1].addr = i2cClient->addr;
-	msg[1].flags = 0;
-	msg[1].len = length;
-	msg[1].buf = (char *)pBuffer;
+	msg[0].len = (4 + length);
+	msg[0].buf = (u8 *)&write_buf;
 
-	ret = i2c_transfer(i2cClient->adapter, msg, 2);
-	if (ret != 2) {
-		dev_err(pDev, "Failed I2C write transfer. RC:%d\n", ret);
-		return 0;
+	for (i = 0; i < 8; i++) {
+		ret = i2c_transfer(i2cClient->adapter, msg, 1);
+		if (ret == 1)
+			return length;
+		dev_err(pDev, "Failed I2C write page. RC:%d\n", ret);
+		udelay(data->data_core.bus_holdoff_delay_us);
 	}
 
 	udelay(data->data_core.bus_holdoff_delay_us);
 	return length;
 }
+EXPORT_SYMBOL_GPL(axiom_write_page);
 
 // purpose: Process the interrupt notifying the system a new report is available
 // returns: Value to indicate the interrupt has been handled
@@ -138,14 +155,15 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 #endif
 {
 #if KERNEL_VERSION(6, 3, 0) <= LINUX_VERSION_CODE
-	const struct i2c_device_id *id = i2c_client_get_device_id(i2cClient);
+	const struct i2c_device_id *id __maybe_unused = i2c_client_get_device_id(i2cClient);
 #endif
 	struct device *pDev = &i2cClient->dev;
 	struct axiom_data *data;
 	struct axiom_data_core *data_core;
-	u32 error;
+	u32 error = 0;
 	u32 target;
 	u32 i2cFunctionality;
+	bool ret;
 
 	dev_info(pDev, "aXiom Probe\n");
 	dev_info(pDev, "Device IRQ: %u\n", i2cClient->irq);
@@ -174,6 +192,10 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 
 	axiom_discover(data_core);
 	axiom_rebaseline(data_core);
+	ret = axiom_dev_init(data_core);
+	if (ret)
+		dev_info(pDev, "axiom dev node creation failed");
+
 
 	// Now Register with the Input Sub-System
 	//-------------------------------------------------
@@ -204,7 +226,10 @@ static int axiom_i2c_probe(struct i2c_client *i2cClient, const struct i2c_device
 			dev_err(pDev, "Failed to request IRQ %u (error: %d)\n", i2cClient->irq, error);
 			return error;
 		}
+		data_core->irq_line = i2cClient->irq;
 	}
+	dev_info(pDev, "Reseting axiom in probe");
+	axiom_reset(data_core);
 	dev_info(pDev, "Probe End\n");
 
 	return 0;
@@ -222,6 +247,7 @@ static void axiom_i2c_remove(struct i2c_client *i2cClient)
 
 	data = i2c_get_clientdata(i2cClient);
 	data_core = &data->data_core;
+	axiom_dev_exit(data_core);
 
 	if (data->irq_allocated) {
 		dev_info(&i2cClient->dev, "freeing IRQ %u...\n", i2cClient->irq);

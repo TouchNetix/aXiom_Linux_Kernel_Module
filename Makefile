@@ -6,7 +6,7 @@ KERNEL_LOC=/lib/modules/$(shell uname -r)/build/
 
 axiom_usb-objs := axiom_core.o axiom_usb_comms.o
 axiom_spi-objs := axiom_core.o axiom_spi_comms.o
-axiom_i2c-objs := axiom_core.o axiom_i2c_comms.o
+axiom_i2c-objs := axiom_core.o axiom_i2c_comms.o axiom_ioctl.o axiom_fw.o axiom_cfg.o
 
 all:
 	$(MAKE) -C $(KERNEL_LOC) M=$(PWD) modules
