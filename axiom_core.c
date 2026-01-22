@@ -2,12 +2,13 @@
 /*
  * TouchNetix aXiom Touchscreen Driver
  *
- * Copyright (C) 2020-2023 TouchNetix Ltd.
+ * Copyright (C) 2020-2026 TouchNetix Ltd.
  *
  * Author(s): Mark Satterthwaite <mark.satterthwaite@touchnetix.com>
  *            Pedro Torruella <pedro.torruella@touchnetix.com>
  *            Bart Prescott <bartp@baasheep.co.uk>
  *            Hannah Rossiter <hannah.rossiter@touchnetix.com>
+ *            Andrew Thomas <andrew.thomas@touchnetix.com>
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -16,510 +17,56 @@
  *
  */
 
-//#define DEBUG   // Enable debug messages
+// #define DEBUG // Enable debug messages
 
-#include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/device.h>
-#include <linux/input.h>
 #include <linux/input/mt.h>
 #include <linux/crc16.h>
-#include <linux/slab.h>
-
-/**
- * aXiom devices are typically configured to report
- * touches at a rate of 100Hz (10ms). For systems
- * that require polling for reports, 100ms seems like
- * an acceptable polling rate.
- * When reports are polled, it will be expected to
- * occasionally observe the overflow bit being set
- * in the reports. This indicates that reports are not
- * being read fast enough.
- */
-#define POLL_INTERVAL_DEFAULT_MS	100
-
+#include <linux/property.h>
+#include <linux/interrupt.h>
+#include <linux/unaligned.h>
 #include "axiom_core.h"
 
-// purpose: Decodes and populates the local u31 structure.
-//          Given a buffer of data read from page 0 of u31 in an aXiom
-//          device.
-void axiom_get_dev_info(struct axiom_data_core *data_core, u8 *data)
+/* u31 device info masks */
+#define AX_DEV_ID_MASK GENMASK(14, 0)
+#define AX_MODE BIT(15)
+#define AX_FW_REV_MINOR_MASK GENMASK(7, 0)
+#define AX_FW_REV_MAJOR_MASK GENMASK(15, 8)
+#define AX_VARIANT_MASK GENMASK(5, 0)
+#define AX_FW_STATUS BIT(7)
+#define AX_TCP_REV_MASK GENMASK(15, 8)
+#define AX_BOOT_REV_MINOR_MASK GENMASK(7, 0)
+#define AX_BOOT_REV_MAJOR_MASK GENMASK(15, 8)
+#define AX_NUM_USAGES_MASK GENMASK(7, 0)
+#define AX_SILICON_REV_MASK GENMASK(11, 8)
+#define AX_RUNTIME_FW_PATCH_MASK GENMASK(15, 12)
+
+/* u31 usage table entry masks */
+#define AX_U31_USAGE_NUM_MASK GENMASK(7, 0)
+#define AX_U31_START_PAGE_MASK GENMASK(15, 8)
+#define AX_U31_NUM_PAGES_MASK GENMASK(7, 0)
+#define AX_U31_MAX_OFFSET_MASK GENMASK(14, 8)
+#define AX_U31_OFFSET_TYPE_BIT BIT(15)
+#define AX_U31_UIF_REV_MASK GENMASK(7, 0)
+#define AX_U31_USAGE_TYPE_MASK GENMASK(15, 8)
+
+/* u34 report masks */
+#define AX_U34_LEN_MASK GENMASK(6, 0)
+#define AX_U34_OVERFLOW BIT(7)
+#define AX_U34_USAGE_MASK GENMASK(15, 8)
+#define AX_U34_PAYLOAD_BUFFER 2
+
+/* u41 report masks */
+#define AX_U41_PRESENT_MASK GENMASK(9, 0)
+#define U41_X_Y_OFFSET (2)
+#define U41_COORD_SIZE (4)
+#define U41_Z_OFFSET (42)
+
+static const char *const fw_variants[] = { "3D", "2D", "FORCE",
+					   "0D", "XL", "TOUCHPAD" };
+
+static int axiom_set_capabilities(struct input_dev *input_dev)
 {
-	struct u31_DeviceInfo *pU31_info;
-
-	if (data_core == NULL)
-		return;
-
-	pU31_info = &data_core->u31_Info;
-	if (pU31_info != NULL) {
-		pU31_info->bootloader_mode = ((data[1] & 0x80) != 0) ? 1 : 0;
-		pU31_info->device_id = ((data[1] & 0x7F) << 8) | data[0];
-		pU31_info->fw_minor = data[2];
-		pU31_info->fw_major = data[3];
-		pU31_info->fw_info_extra = (data[4]) | (data[5] << 8);
-		pU31_info->bootloader_fw_ver_minor = data[6];
-		pU31_info->bootloader_fw_ver_major = data[7];
-		pU31_info->jedec_id = (data[8]) | (data[9] << 8);
-		pU31_info->num_usages = data[10];
-		pU31_info->silicon_revision = data[11];
-	}
-}
-EXPORT_SYMBOL_GPL(axiom_get_dev_info);
-
-// purpose: Decodes and populates the local Usage Table.
-//          Given a buffer of data read from page 1 onwards of u31 from
-//          an aXiom device.
-//
-//          See the relevant aXiom's Touch Controller Programmers guide
-//          for information on what a usage table is.
-//
-// returns: u8 with the maximum report length, across all reports for this device.
-u8 axiom_populate_usage_table(struct axiom_data_core *data_core, u8 *pRX_data)
-{
-	u32 usage_id = 0;
-	u8 max_report_len = 0;
-	struct u31_DeviceInfo *pU31_info;
-	struct usage_Entry *pUsage_Table;
-
-	if (data_core == NULL)
-		return 0;
-	pU31_info = &data_core->u31_Info;
-	pUsage_Table = data_core->usage_table;
-
-	// Decode the usage table
-	for (usage_id = 0; usage_id < pU31_info->num_usages; usage_id++) {
-		u16 offset = (usage_id * U31_BYTES_PER_USAGE);
-		u8 id = pRX_data[offset + 0];
-		u8 start_page = pRX_data[offset + 1];
-		u8 num_pages = pRX_data[offset + 2];
-		// Convert words to bytes
-		u8 max_offset = ((pRX_data[offset + 3] & 0x7F) + 1) * 2;
-
-		// Store the entry into the usage table
-		pUsage_Table[usage_id].id = id;
-		pUsage_Table[usage_id].is_report = ((num_pages == 0) ? 1 : 0);
-		pUsage_Table[usage_id].start_page = start_page;
-		pUsage_Table[usage_id].num_pages = num_pages;
-
-		dev_info(data_core->pDev, "Usage %2u Info: %*ph\n", usage_id, U31_BYTES_PER_USAGE,
-				&pRX_data[offset]);
-
-		// Identify the max report length the module will receive
-		if ((pUsage_Table[usage_id].is_report) && (max_offset > max_report_len))
-			max_report_len = max_offset;
-	}
-	data_core->usage_table_populated = true;
-
-	return max_report_len;
-}
-EXPORT_SYMBOL_GPL(axiom_populate_usage_table);
-
-// purpose: Helper function to translate usage/page/offset
-//          triplet into physical address.
-//
-// returns: u16 with physical address to required register
-u16 usage_to_target_address(struct axiom_data_core *data_core,
-							u8 usage,
-							u8 page,
-							u8 offset)
-{
-	u16 target_address = 0;
-	u32 usage_index;
-	struct u31_DeviceInfo *pU31_info;
-	struct usage_Entry *pUsage_Table;
-
-	if (data_core == NULL)
-		return 0;
-	pU31_info = &data_core->u31_Info;
-	pUsage_Table = data_core->usage_table;
-
-	// At the moment the convention is that u31 is always at
-	// physical address 0x0.
-	if (!data_core->usage_table_populated && (usage == 0x31)) {
-		target_address = ((page << 8) + offset);
-	} else if (data_core->usage_table_populated) {
-		for (usage_index = 0; usage_index < pU31_info->num_usages; usage_index++) {
-			if (pUsage_Table[usage_index].id == usage) {
-				if (page < pUsage_Table[usage_index].num_pages) {
-					target_address = ((pUsage_Table[usage_index].start_page + page) << 8) + offset;
-				} else {
-					target_address = 0xFFFF;
-					pr_err("ERROR: aXiom-core: Invalid usage table! usage: %u, page: %u, offset: %u\n", usage, page, offset);
-				}
-				break;
-			}
-		}
-	} else {
-		target_address = 0xFFFF;
-		pr_err("ERROR: aXiom-core: Unpopulated usage table for usage: %u\n", usage);
-	}
-
-	pr_debug("aXiom-core: target_address is 0x%04x for usage: %u page %u\n", target_address, usage, page);
-	return target_address;
-}
-EXPORT_SYMBOL_GPL(usage_to_target_address);
-
-// purpose: Function to retrieve, store, and print the connected device information
-// returns: True/false depending on success of the process
-bool axiom_discover(struct axiom_data_core *data_core)
-{
-	u8 *pRX_data = &data_core->rx_buf[0];
-	struct device *pDev = data_core->pDev;
-
-	// First the first page of u31 to get the device infromation and the number of usages
-	if (0 == (*data_core->pAxiomReadUsage)(data_core->pAxiomData, 0x31, 0, AX_U31_PAGE0_LENGTH, pRX_data)) {
-		dev_err(pDev, "Failed %s\n", __func__);
-		return false;
-	}
-
-	axiom_get_dev_info(data_core, pRX_data);
-
-	dev_info(pDev, "Data Decode:\n");
-	dev_info(pDev, "  Bootloader Mode: %u\n", data_core->u31_Info.bootloader_mode);
-	dev_info(pDev, "  Device ID      : %04x\n", data_core->u31_Info.device_id);
-	dev_info(pDev, "  Firmware Rev   : %02x.%02x\n", data_core->u31_Info.fw_major, data_core->u31_Info.fw_minor);
-	dev_info(pDev, "  Bootloader Rev : %02x.%02x\n", data_core->u31_Info.bootloader_fw_ver_major, data_core->u31_Info.bootloader_fw_ver_minor);
-	dev_info(pDev, "  FW Extra Info  : %04x\n", data_core->u31_Info.fw_info_extra);
-	dev_info(pDev, "  Silicon        : %02x\n", data_core->u31_Info.jedec_id);
-	dev_info(pDev, "  Num Usages     : %04x\n", data_core->u31_Info.num_usages);
-
-	// Read the second page of u31 to get the usage table
-	if (0 == (*data_core->pAxiomReadUsage)(data_core->pAxiomData, 0x31, 1, (U31_BYTES_PER_USAGE * data_core->u31_Info.num_usages), pRX_data)) {
-		dev_err(pDev, "Failed %s\n", __func__);
-		return false;
-	}
-
-	data_core->max_report_len = axiom_populate_usage_table(data_core, pRX_data);
-	dev_info(pDev, "Max Report Length: %u\n", data_core->max_report_len);
-	return true;
-}
-EXPORT_SYMBOL_GPL(axiom_discover);
-
-// purpose: Helper function to rebaseline the touchscreen, effectively zero-ing it
-void axiom_rebaseline(struct axiom_data_core *data_core)
-{
-	struct device *pDev = data_core->pDev;
-	u8 buffer[8] = {0};
-
-	memset(buffer, 0, sizeof(buffer));
-
-	buffer[0] = 0x03;   // Rebaseline request
-
-	if (sizeof(buffer) == (*data_core->pAxiomWriteUsage)(data_core->pAxiomData, 0x02, 0, sizeof(buffer), buffer))
-		dev_info(pDev, "Capture Baseline Requested\n");
-	else
-		dev_err(pDev, "Rebaseline failed\n");
-}
-EXPORT_SYMBOL_GPL(axiom_rebaseline);
-
-// purpose: Allocate the resources for the data core and give them all default values.
-void axiom_init_data_core(struct axiom_data_core *data_core, struct device *pDev, void *pAxiomData, void *pAxiomReadUsage, void *pAxiomWriteUsage)
-{
-	memset(&data_core->targets, 0, sizeof(data_core->targets));
-	memset(&data_core->u31_Info, 0, sizeof(data_core->u31_Info));
-	memset(data_core->rx_buf, 0, sizeof(data_core->rx_buf));
-	data_core->usage_table_populated = false;
-	data_core->max_report_len = 0;
-	data_core->input_dev = NULL;
-	data_core->pDev = pDev;
-	data_core->bus_holdoff_delay_us = 250;
-	data_core->report_counter = 0;
-	data_core->report_overflow_counter = 0;
-	data_core->pAxiomData = pAxiomData;
-	data_core->pAxiomReadUsage = pAxiomReadUsage;
-	data_core->pAxiomWriteUsage = pAxiomWriteUsage;
-}
-EXPORT_SYMBOL_GPL(axiom_init_data_core);
-
-// purpose: Free up any resources allocated during discover etc.
-void axiom_remove(struct axiom_data_core *data_core)
-{
-	struct device *pDev = data_core->pDev;
-
-	if (data_core->usage_table) {
-		dev_info(pDev, "freeing usage table...\n");
-		data_core->usage_table_populated = false;
-	}
-
-	if (data_core->input_dev) {
-		dev_info(pDev, "unregistering input device...\n");
-		input_unregister_device(data_core->input_dev);
-		data_core->input_dev = NULL;
-	}
-}
-EXPORT_SYMBOL_GPL(axiom_remove);
-
-static void axiom_poll(struct input_dev *input_dev)
-{
-	struct axiom_data_core *data_core = input_get_drvdata(input_dev);
-	u8 *pRX_data = &data_core->rx_buf[0];
-
-	(*data_core->pAxiomReadUsage)(data_core->pAxiomData, 0x34, 0, data_core->max_report_len, pRX_data);
-
-	axiom_process_report(data_core, pRX_data);
-}
-
-// purpose: Support function to axiom_process_report.
-//          It validates the crc and multiplexes the axiom reports
-//          to the appropriate report handler
-void axiom_process_report(struct axiom_data_core *data_core, u8 *pReport)
-{
-	u8 len;
-	u16 crc_calc;
-	u16 crc_report;
-	u8 usage = pReport[1];
-	struct device *pDev = data_core->pDev;
-
-	if ((pReport[0] & COMMS_OVERFLOW_MSK) != 0) {
-		data_core->report_overflow_counter++;
-		if (data_core->report_overflow_counter > 10) {
-			//it's normal to get a couple of overflows as the driver starts up
-			//dev_err(pDev, "Report overflow bit set. Counter:%u.\n", data_core->report_overflow_counter);
-		}
-	}
-
-	len = (pReport[0] & COMMS_REPORT_LEN_MSK) << 1;
-	if (len == 0) {
-		dev_err(pDev, "Zero length report discarded.\n");
-		return;
-	}
-
-	dev_dbg(pDev, "Payload Data %*ph\n", len, pReport);
-
-	// Validate the report CRC
-	crc_report = (pReport[len - 1] << 8) | (pReport[len - 2]);
-	crc_calc = crc16(0, pReport, (len - 2)); // Length is in 16 bit words and remove the size of the CRC16 itself
-
-	if (crc_calc != crc_report) {
-		dev_err(pDev, "CRC mismatch! Expected: %04X, Calculated CRC: %04X. Report discarded.\n", crc_report, crc_calc);
-		return;
-	}
-
-	switch (usage) {
-	case USAGE_2DCTS_REPORT_ID:
-		axiom_process_u41_report(&pReport[1], data_core);
-		break;
-
-	case USAGE_2AUX_REPORT_ID: // This is an aux report (force)
-#ifdef U46_ENABLE_RAW_FORCE_DATA
-		axiom_process_u46_report(&pReport[1], data_core);
-#endif
-		break;
-
-	case USAGE_2HB_REPORT_ID:
-		// This is a heartbeat report
-		break;
-
-	default:
-		// Don't care or are not handled processed, discard
-		break;
-	}
-
-	data_core->report_counter++;
-}
-EXPORT_SYMBOL_GPL(axiom_process_report);
-
-// purpose: Support function to axiom_process_u41_report.
-//          It generates input-subsystem events for every target.
-//
-// returns: Bools, if true, after calling this function the caller shall
-//          issue a Sync to the input sub-system.
-bool axiom_process_u41_report_target(struct axiom_data_core *data_core,
-										struct u41_Target_Report *pTarget)
-{
-	struct input_dev *input_dev;
-	struct u41_Target *pTargetPrevState;
-	enum u41_Target_State_e currentState;
-	bool update = false;
-	int slot;
-
-	if (data_core == NULL)
-		return false;
-	input_dev = data_core->input_dev;
-
-	// Verify the target index
-	if (pTarget->index >= U41_MAX_TARGETS) {
-		pr_debug("Invalid target index! %u\n", pTarget->index);
-		return false;
-	}
-
-	// Grab a pointer to an element in the target status array, this makes the
-	// code slightly more readable and easier to use.
-	pTargetPrevState = &data_core->targets[pTarget->index];
-
-	currentState = ((pTarget->present == 0)                         ? Target_State_Not_Present
-					: (pTarget->z >= 0)                             ? Target_State_Touching
-					: (pTarget->z > PROX_LEVEL) && (pTarget->z < 0) ? Target_State_Hover
-					: (pTarget->z == PROX_LEVEL)                    ? Target_State_Prox
-																	: Target_State_Not_Present);
-	if ((pTargetPrevState->state == currentState) &&
-		(pTargetPrevState->x == pTarget->x) &&
-		(pTargetPrevState->y == pTarget->y) &&
-		(pTargetPrevState->z == pTarget->z)) {
-		//There was no change to the previous reported state, so do nothing...
-		return false;
-	}
-
-#ifdef AXIOM_USE_KERNEL_SLOT_ASSIGNMENT
-	slot = input_mt_get_slot_by_key(input_dev, pTarget->index);
-	if (slot < 0)
-		slot = pTarget->index;
-#else
-	slot = pTarget->index;
-#endif
-	pr_debug("U41 Target T%u, slot:%u present:%u, x:%u, y:%u, z:%d\n",
-		pTarget->index, slot, pTarget->present,
-		pTarget->x, pTarget->y, pTarget->z);
-
-	switch (currentState) {
-	default:
-	case Target_State_Not_Present:
-	case Target_State_Prox:
-	{
-		if (pTargetPrevState->insert) {
-			update = true;
-			pTargetPrevState->insert = false;
-			input_mt_slot(input_dev, slot);
-
-			if (slot == 0)
-				input_report_key(input_dev, BTN_LEFT, 0);
-
-			input_mt_report_slot_inactive(input_dev);
-			//make sure the previous coordinates are all off screen when the finger comes back...
-			pTarget->x = pTarget->y = 65535;
-			pTarget->z = PROX_LEVEL;
-		}
-		break;
-	}
-	case Target_State_Hover:
-	case Target_State_Touching:
-	{
-		pTargetPrevState->insert = true;
-		update = true;
-		input_mt_slot(input_dev, slot);
-#ifdef AXIOM_USE_KERNEL_SLOT_ASSIGNMENT
-		input_mt_report_slot_state(input_dev, MT_TOOL_FINGER, true);
-#else
-		input_report_abs(input_dev, ABS_MT_TRACKING_ID, slot);
-#endif
-		input_report_abs(input_dev, ABS_MT_POSITION_X, pTarget->x);
-		input_report_abs(input_dev, ABS_X, pTarget->x);
-		input_report_abs(input_dev, ABS_MT_POSITION_Y, pTarget->y);
-		input_report_abs(input_dev, ABS_Y, pTarget->y);
-
-		if (currentState == Target_State_Touching) {
-			input_report_abs(input_dev, ABS_MT_DISTANCE, 0);
-			input_report_abs(input_dev, ABS_DISTANCE, 0);
-			input_report_abs(input_dev, ABS_MT_PRESSURE, pTarget->z);
-			input_report_abs(input_dev, ABS_PRESSURE, pTarget->z);
-		} else { //(currentState == Target_State_Hover)
-			input_report_abs(input_dev, ABS_MT_DISTANCE, -pTarget->z);
-			input_report_abs(input_dev, ABS_DISTANCE, -pTarget->z);
-			input_report_abs(input_dev, ABS_MT_PRESSURE, 0);
-			input_report_abs(input_dev, ABS_PRESSURE, 0);
-		}
-
-		if (slot == 0)
-			input_report_key(input_dev, BTN_LEFT, (currentState == Target_State_Touching));
-
-		break;
-	}
-	}
-
-	pTargetPrevState->state = currentState;
-	pTargetPrevState->x = pTarget->x;
-	pTargetPrevState->y = pTarget->y;
-	pTargetPrevState->z = pTarget->z;
-
-	if (update)
-		input_mt_sync_frame(input_dev);
-
-	return update;
-}
-
-// purpose: To take a raw buffer with u41 report data and decode it.
-//          also generate input events if needed.
-//
-//          rx_buf : ptr to a u8 array
-//                   [0]: Usage number
-//                   [1]: Status LSB
-//                   [2]: Status MSB
-void axiom_process_u41_report(u8 *rx_buf, struct axiom_data_core *data_core)
-{
-	u16 target_status = 0;
-	u32 i = 0;
-	bool update_done = false;
-	struct input_dev *input_dev;
-	struct u41_Target_Report target;
-
-	if (data_core == NULL)
-		return;
-
-	input_dev = data_core->input_dev;
-
-	if (rx_buf[0] != 0x41) {
-		pr_err("ERROR: aXiom-core: data in buffer does not have expected u41 format.\n");
-		return;
-	}
-
-	target_status = ((rx_buf[1]) | (rx_buf[2] << 8));
-
-	// For details on this decoding, consult the appropriate
-	// aXiom's Programmers Guide and Touch Controller Protocol Usage Definitions.
-	for (i = 0; i < U41_MAX_TARGETS; i++) {
-		target.index = i;
-		target.present = ((target_status & (1 << i)) != 0) ? 1 : 0;
-		target.x = (rx_buf[(i * 4) + 3]) | (rx_buf[(i * 4) + 4] << 8);
-		target.y = (rx_buf[(i * 4) + 5]) | (rx_buf[(i * 4) + 6] << 8);
-		target.z = (s8)(rx_buf[i + 43]);
-		update_done |= axiom_process_u41_report_target(data_core, &target);
-	}
-
-	if (update_done)
-		input_sync(input_dev);
-}
-EXPORT_SYMBOL_GPL(axiom_process_u41_report);
-
-#ifdef U46_ENABLE_RAW_FORCE_DATA
-// purpose: To take a raw buffer with u46 report data and decode it.
-//          Also generates input events if needed.
-void axiom_process_u46_report(u8 *rx_buf, struct axiom_data_core *data_core)
-{
-	u16 aux_value;
-	u32 i = 0;
-	u32 event_value;
-	struct input_dev *input_dev;
-
-	if (data_core == NULL)
-		return;
-	input_dev = data_core->input_dev;
-
-	for (i = 0; i < U46_AUX_CHANNELS; i++) {
-		aux_value = ((rx_buf[(i * 2) + 2] << 8) | (rx_buf[(i * 2) + 1])) & U46_AUX_MASK;
-		event_value = (i << 16) | (aux_value);
-		// Create the event.
-		input_event(input_dev, EV_MSC, MSC_RAW, event_value);
-	}
-
-	input_mt_sync(input_dev);
-	input_sync(input_dev);
-}
-EXPORT_SYMBOL_GPL(axiom_process_u46_report);
-#endif
-
-
-// purpose: To register an aXiom based driver with the Input Sub-System.
-// returns: Pointer to the register input device.
-struct input_dev *axiom_register_input_subsystem(bool poll_enable, int poll_interval)
-{
-	struct input_dev *input_dev = input_allocate_device();
-	int ret = 0;
-
-	if (input_dev == NULL) {
-		pr_err("ERROR: aXiom-core: Failed to allocate memory for input device!\n");
-		return NULL;
-	}
-
 	input_dev->name = "TouchNetix aXiom Touchscreen";
 	input_dev->phys = "input/axiom_ts";
 
@@ -536,51 +83,397 @@ struct input_dev *axiom_register_input_subsystem(bool poll_enable, int poll_inte
 	input_set_abs_params(input_dev, ABS_MT_DISTANCE, 0, 127, 0, 0);
 	input_set_abs_params(input_dev, ABS_MT_PRESSURE, 0, 127, 0, 0);
 
-#ifdef AXIOM_USE_TOUCHSCREEN_INTERFACE
 	input_mt_init_slots(input_dev, U41_MAX_TARGETS, INPUT_MT_DIRECT);
-#else //TABLET_INTERFACE (emulates mouse pointer as expected)
-	input_abs_set_res(input_dev, ABS_MT_POSITION_X, 100);
-	input_abs_set_res(input_dev, ABS_MT_POSITION_Y, 100);
-	input_abs_set_res(input_dev, ABS_X, 100);
-	input_abs_set_res(input_dev, ABS_Y, 100);
-	input_mt_init_slots(input_dev, U41_MAX_TARGETS, INPUT_MT_POINTER);
 
-	input_set_abs_params(input_dev, ABS_DISTANCE, 0, 127, 0, 0);
-	input_set_abs_params(input_dev, ABS_PRESSURE, 0, 127, 0, 0);
-	input_set_capability(input_dev, EV_KEY, BTN_TOOL_PEN);
-#endif
-
-	input_set_capability(input_dev, EV_KEY, BTN_LEFT);
-
-	// Force
-#ifdef U46_ENABLE_RAW_FORCE_DATA
-	set_bit(EV_REL, input_dev->evbit);
-	set_bit(EV_MSC, input_dev->evbit);
-
-	// Declare that we support "RAW" Miscellaneous events
-	set_bit(MSC_RAW, input_dev->mscbit);
-#endif
-	if (poll_enable) {
-		ret = input_setup_polling(input_dev, axiom_poll);
-		if (ret) {
-			pr_err("Unable to set up polling: %d\n", ret);
-			return NULL;
-		}
-		if (poll_interval)
-			input_set_poll_interval(input_dev, poll_interval);
-		else
-			input_set_poll_interval(input_dev, POLL_INTERVAL_DEFAULT_MS);
-	}
-
-	ret = input_register_device(input_dev);
-	if (ret != 0) {
-		pr_err("ERROR: aXiom-core: Could not register with Input Sub-system.\n");
-		input_unregister_device(input_dev);
-		return NULL;
-	}
-	return input_dev;
+	return 0;
 }
-EXPORT_SYMBOL_GPL(axiom_register_input_subsystem);
+
+static struct u31_usage_entry *usage_find_entry(struct axiom *ax, u16 usage)
+{
+	u16 i;
+
+	for (i = 0; i < ax->dev_info.num_usages; i++) {
+		if (ax->usage_table[i].usage_num == usage)
+			return &ax->usage_table[i];
+	}
+
+	pr_err("aXiom-core: Usage u%02x not found in usage table\n", usage);
+	return ERR_PTR(-EINVAL);
+}
+
+static void axiom_unpack_device_info(const u8 *buf,
+				     struct axiom_device_info *info)
+{
+	u16 w;
+
+	w = get_unaligned_le16(buf);
+	info->device_id = FIELD_GET(AX_DEV_ID_MASK, w);
+	info->mode = !!(w & AX_MODE);
+
+	w = get_unaligned_le16(buf + 2);
+	info->runtime_fw_rev_minor = FIELD_GET(AX_FW_REV_MINOR_MASK, w);
+	info->runtime_fw_rev_major = FIELD_GET(AX_FW_REV_MAJOR_MASK, w);
+
+	w = get_unaligned_le16(buf + 4);
+	info->device_build_variant = FIELD_GET(AX_VARIANT_MASK, w);
+	info->runtime_fw_status = !!(w & AX_FW_STATUS);
+	info->tcp_revision = FIELD_GET(AX_TCP_REV_MASK, w);
+
+	w = get_unaligned_le16(buf + 6);
+	info->bootloader_fw_rev_minor = FIELD_GET(AX_BOOT_REV_MINOR_MASK, w);
+	info->bootloader_fw_rev_major = FIELD_GET(AX_BOOT_REV_MAJOR_MASK, w);
+
+	info->jedec_id = get_unaligned_le16(buf + 8);
+
+	w = get_unaligned_le16(buf + 10);
+	info->num_usages = FIELD_GET(AX_NUM_USAGES_MASK, w);
+	info->silicon_revision = FIELD_GET(AX_SILICON_REV_MASK, w);
+	info->runtime_fw_rev_patch = FIELD_GET(AX_RUNTIME_FW_PATCH_MASK, w);
+}
+
+static void axiom_unpack_usage_table(u8 *buf, struct axiom *ax)
+{
+	u8 *ptr;
+	struct u31_usage_entry *entry;
+	int i;
+	u16 w;
+	u16 report_len;
+
+	for (i = 0; i < ax->dev_info.num_usages && i < U31_MAX_USAGES; i++) {
+		entry = &ax->usage_table[i];
+		/* Calculate offset for this specific entry */
+		ptr = buf + (i * SIZE_U31_USAGE_ENTRY);
+
+		w = get_unaligned_le16(ptr);
+		entry->usage_num = FIELD_GET(AX_U31_USAGE_NUM_MASK, w);
+		entry->start_page = FIELD_GET(AX_U31_START_PAGE_MASK, w);
+
+		w = get_unaligned_le16(ptr + 2);
+		entry->num_pages = FIELD_GET(AX_U31_NUM_PAGES_MASK, w);
+		entry->max_offset = FIELD_GET(AX_U31_MAX_OFFSET_MASK, w);
+		entry->offset_type = !!(w & AX_U31_OFFSET_TYPE_BIT);
+
+		w = get_unaligned_le16(ptr + 4);
+		entry->uifrevision = FIELD_GET(AX_U31_UIF_REV_MASK, w);
+		entry->usage_type = FIELD_GET(AX_U31_USAGE_TYPE_MASK, w);
+
+		// Convert words to bytes
+		report_len = (entry->max_offset + 1) * 2;
+		if ((entry->usage_type == REPORT) &&
+		    (report_len > ax->max_report_len)) {
+			ax->max_report_len = report_len;
+		}
+	}
+}
+
+static int axiom_init_dev_info(struct axiom *ax)
+{
+	int i;
+	struct u31_usage_entry *u;
+	int err;
+
+	/* Read page 0 of u31 */
+	err = ax->bus_ops->read(ax->dev, 0x0, SIZE_U31_DEVICE_INFO,
+				ax->read_buf);
+	if (err)
+		return -EIO;
+
+	axiom_unpack_device_info(ax->read_buf, &ax->dev_info);
+
+	const char *variant_str;
+	if (ax->dev_info.device_build_variant < ARRAY_SIZE(fw_variants)) {
+		variant_str = fw_variants[ax->dev_info.device_build_variant];
+	} else {
+		variant_str = "UNKNOWN";
+	}
+	char silicon_rev = (char)(0x41 + ax->dev_info.silicon_revision);
+
+	dev_info(ax->dev, "Firmware Info:\n");
+	dev_info(ax->dev, "  BL Mode     : %u\n", ax->dev_info.mode);
+	dev_info(ax->dev, "  Device ID   : %04x\n", ax->dev_info.device_id);
+	dev_info(ax->dev, "  FW Revision : %u.%u.%u-%s %s\n",
+		 ax->dev_info.runtime_fw_rev_major,
+		 ax->dev_info.runtime_fw_rev_minor,
+		 ax->dev_info.runtime_fw_rev_patch,
+		 (ax->dev_info.runtime_fw_status == 0) ? "eng" : "prod",
+		 variant_str);
+	dev_info(ax->dev, "  BL Revision : %02x.%02x\n",
+		 ax->dev_info.bootloader_fw_rev_major,
+		 ax->dev_info.bootloader_fw_rev_minor);
+	dev_info(ax->dev, "  Silicon     : 0x%04X (Rev %c)\n",
+		 ax->dev_info.jedec_id, silicon_rev);
+	dev_info(ax->dev, "  Num Usages  : %u\n", ax->dev_info.num_usages);
+
+	if (ax->dev_info.num_usages > U31_MAX_USAGES) {
+		dev_err(ax->dev,
+			"Num usages (%u) exceeds maximum supported (%u)\n",
+			ax->dev_info.num_usages, U31_MAX_USAGES);
+		return -EINVAL;
+	}
+
+	/* Read the second page of u31 to get the usage table */
+	err = ax->bus_ops->read(ax->dev, 0x100,
+				sizeof(ax->usage_table[0]) *
+					ax->dev_info.num_usages,
+				ax->read_buf);
+	if (err)
+		return -EIO;
+
+	axiom_unpack_usage_table(ax->read_buf, ax);
+
+	dev_info(ax->dev, "Usage Table:\n");
+	for (i = 0; i < ax->dev_info.num_usages; i++) {
+		u = &ax->usage_table[i];
+
+		dev_info(
+			ax->dev,
+			"  Usage: u%02x  Rev: %3u  Page: 0x%02x00  Num Pages: %3u\n",
+			u->usage_num, u->uifrevision, u->start_page,
+			u->num_pages);
+	}
+	dev_info(ax->dev, "Max Report Length: %u\n", ax->max_report_len);
+
+	if (ax->max_report_len > AXIOM_MAX_READ_SIZE) {
+		dev_err(ax->dev,
+			"aXiom maximum report length (%u) greater than allocated buffer size (%u).",
+			ax->max_report_len, AXIOM_MAX_READ_SIZE);
+		return -EINVAL;
+	}
+
+	/* Set u34 address to allow direct access to report reading address */
+	u = usage_find_entry(ax, 0x34);
+	if (IS_ERR(u))
+		return PTR_ERR(u);
+	ax->u34_address = u->start_page << 8;
+
+	return 0;
+}
+
+static int axiom_process_u41_report(struct axiom *ax, u8 *report)
+{
+	int i;
+	u16 target_present;
+	bool active;
+	u8 offset;
+	enum u41_target_state_e state;
+	u16 x;
+	u16 y;
+	s8 z;
+
+	target_present =
+		FIELD_GET(AX_U41_PRESENT_MASK, get_unaligned_le16(&report[0]));
+
+	for (i = 0; i < U41_MAX_TARGETS; i++) {
+		active = !!((target_present >> i) & 1);
+
+		offset = U41_X_Y_OFFSET + (i * U41_COORD_SIZE);
+		x = get_unaligned_le16(&report[offset]);
+		y = get_unaligned_le16(&report[offset + 2]);
+		z = report[U41_Z_OFFSET + i];
+
+		if (!active)
+			state = Target_State_Not_Present;
+		else if (z >= 0)
+			state = Target_State_Touching;
+		else if ((z > U41_PROX_LEVEL) && (z < 0))
+			state = Target_State_Hover;
+		else if (z == U41_PROX_LEVEL)
+			state = Target_State_Prox;
+		else
+			state = Target_State_Not_Present;
+
+		dev_dbg(ax->dev, "Target %d: x=%u y=%u z=%d present=%d\n", i, x,
+			y, z, active);
+
+		switch (state) {
+		case Target_State_Not_Present:
+		case Target_State_Prox:
+
+			input_mt_slot(ax->input, i);
+			input_mt_report_slot_inactive(ax->input);
+			break;
+
+		case Target_State_Hover:
+		case Target_State_Touching:
+
+			input_mt_slot(ax->input, i);
+			input_report_abs(ax->input, ABS_MT_TRACKING_ID, i);
+			input_report_abs(ax->input, ABS_MT_POSITION_X, x);
+			input_report_abs(ax->input, ABS_MT_POSITION_Y, y);
+
+			if (state == Target_State_Touching) {
+				input_report_abs(ax->input, ABS_MT_DISTANCE, 0);
+				input_report_abs(ax->input, ABS_MT_PRESSURE, z);
+			} else { /* Hover */
+				input_report_abs(ax->input, ABS_MT_DISTANCE, -z);
+				input_report_abs(ax->input, ABS_MT_PRESSURE, 0);
+			}
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	input_mt_sync_frame(ax->input);
+	input_sync(ax->input);
+
+	return 0;
+}
+
+static int axiom_process_report(struct axiom *ax, u8 *report)
+{
+	int err;
+	struct u34_report_header hdr;
+	u16 crc_calc;
+	u16 crc_report;
+	u8 len;
+	u16 hdr_buf = get_unaligned_le16(&report[0]);
+
+	dev_dbg(ax->dev, "Payload Data %*ph\n", ax->max_report_len, report);
+
+	hdr.report_length = FIELD_GET(AX_U34_LEN_MASK, hdr_buf);
+	hdr.overflow = !!(hdr_buf & AX_U34_OVERFLOW);
+	hdr.report_usage = FIELD_GET(AX_U34_USAGE_MASK, hdr_buf);
+
+	len = hdr.report_length << 1;
+	if (hdr.report_length == 0) {
+		dev_err(ax->dev, "Zero length report discarded.\n");
+		return -EIO;
+	}
+
+	// Length is 16 bit words and remove the size of the CRC16 itself
+	crc_report = (report[len - 1] << 8) | (report[len - 2]);
+	crc_calc = crc16(0, report, (len - 2));
+
+	if (crc_calc != crc_report) {
+		dev_err(ax->dev,
+			"CRC mismatch! Expected: %04X, Calculated CRC: %04X. Report discarded.\n",
+			crc_report, crc_calc);
+		return -EIO;
+	}
+
+	switch (hdr.report_usage) {
+	case AX_2DCTS_REPORT_ID:
+		err = axiom_process_u41_report(ax,
+					       &report[AX_U34_PAYLOAD_BUFFER]);
+		break;
+
+	default:
+		break;
+	}
+
+	return err;
+}
+
+static void axiom_poll(struct input_dev *input_dev)
+{
+	struct axiom *ax = input_get_drvdata(input_dev);
+	int err;
+
+	/* Read touch reports from u34 */
+	err = ax->bus_ops->read(ax->dev, ax->u34_address, ax->max_report_len,
+				ax->read_buf);
+	if (err)
+		return;
+
+	err = axiom_process_report(ax, ax->read_buf);
+	if (err)
+		dev_err(ax->dev, "Failed to process report: %d\n", err);
+}
+
+static irqreturn_t axiom_irq(int irq, void *handle)
+{
+	struct axiom *ax = handle;
+	int err;
+
+	/* Read touch reports from u34 */
+	err = ax->bus_ops->read(ax->dev, ax->u34_address, ax->max_report_len,
+				ax->read_buf);
+	if (err)
+		goto out;
+
+	err = axiom_process_report(ax, ax->read_buf);
+	if (err)
+		dev_err(ax->dev, "Failed to process report: %d\n", err);
+
+out:
+	return IRQ_HANDLED;
+}
+
+struct axiom *axiom_probe(const struct axiom_bus_ops *bus_ops,
+			  struct device *dev, int irq)
+{
+	struct axiom *ax;
+	struct input_dev *input_dev;
+	int err;
+	bool poll_enable = false;
+	u8 poll_period = 0;
+
+	ax = devm_kzalloc(dev, sizeof(*ax), GFP_KERNEL);
+	if (!ax)
+		return ERR_PTR(-ENOMEM);
+
+	input_dev = devm_input_allocate_device(dev);
+	if (!input_dev) {
+		pr_err("ERROR: aXiom-core: Failed to allocate memory for input device!\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	poll_enable = device_property_read_bool(dev, "axiom,poll-enable");
+
+	device_property_read_u8(dev, "axiom,poll-period", &poll_period);
+	if (!poll_period)
+		poll_period = AX_POLLING_PERIOD_MS;
+
+	ax->dev = dev;
+	ax->input = input_dev;
+	ax->bus_ops = bus_ops;
+	ax->irq = irq;
+
+	dev_info(dev, "aXiom Probe\n");
+	if (poll_enable)
+		dev_info(dev, "Polling Period : %u\n", poll_period);
+	else
+		dev_info(dev, "Device IRQ : %u\n", ax->irq);
+
+	axiom_set_capabilities(input_dev);
+
+	err = axiom_init_dev_info(ax);
+	if (err) {
+		dev_err(ax->dev, "Failed to read device info, err: %d\n", err);
+		return ERR_PTR(err);
+	}
+
+	if (poll_enable) {
+		err = input_setup_polling(input_dev, axiom_poll);
+		if (err) {
+			dev_err(ax->dev, "could not set up polling mode, %d\n",
+				err);
+			return ERR_PTR(err);
+		}
+
+		input_set_poll_interval(input_dev, poll_period);
+	} else {
+		err = devm_request_threaded_irq(ax->dev, ax->irq, NULL,
+						axiom_irq,
+						IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+						"axiom_irq", ax);
+		if (err)
+			return ERR_PTR(err);
+	}
+
+	err = input_register_device(input_dev);
+	if (err) {
+		dev_err(ax->dev, "Failed to register input device: %d\n", err);
+		return ERR_PTR(err);
+	}
+
+	input_set_drvdata(input_dev, ax);
+
+	return ax;
+}
+EXPORT_SYMBOL_GPL(axiom_probe);
 
 MODULE_AUTHOR("TouchNetix <support@touchnetix.com>");
 MODULE_DESCRIPTION("aXiom touchscreen core logic");

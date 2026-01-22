@@ -1,12 +1,13 @@
 /*
  * TouchNetix aXiom Touchscreen Driver
  *
- * Copyright (C) 2020-2023 TouchNetix Ltd.
+ * Copyright (C) 2020-2026 TouchNetix Ltd.
  *
  * Author(s): Mark Satterthwaite <mark.satterthwaite@touchnetix.com>
  *            Pedro Torruella <pedro.torruella@touchnetix.com>
  *            Bart Prescott <bartp@baasheep.co.uk>
- *            Hannah Rossiter <hannah.rossiter@touchnetix.com> 
+ *            Hannah Rossiter <hannah.rossiter@touchnetix.com>
+ *            Andrew Thomas <andrew.thomas@touchnetix.com> 
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -29,13 +30,15 @@
 			status = "okay";
 
 			axiom_i2c@0 {
-					compatible = "axiom_i2c_drv,axiom";
+					compatible = "axiom_i2c,axiom";
 					reg = <0x66>;  /* This must match the I2C ADDR selected on the EVK header, 
 									  use either <0x66> or <0x67>, the default is <0x66> */
 					clock-frequency = <400000>;
 					interrupt-parent = <&gpio>;
 					interrupts = < 24 8 >; /* <GPIO Flags> Flags: 1 = lo-to-hi, 2 = hi-to-lo, 4 = active high, 8 = active low  */
 					pinctrl-names = "default";
+					/* axiom,poll-enable; */
+					/* axiom,poll-period = /bits/ 8 <15>; */
 					/* pinctrl-0 = <&axiom_i2cPins>; */
 			};		
 		};

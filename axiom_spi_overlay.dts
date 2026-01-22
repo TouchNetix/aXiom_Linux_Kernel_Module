@@ -1,12 +1,13 @@
 /*
  * TouchNetix aXiom Touchscreen Driver
  *
- * Copyright (C) 2020-2023 TouchNetix Ltd.
+ * Copyright (C) 2020-2026 TouchNetix Ltd.
  *
  * Author(s): Mark Satterthwaite <mark.satterthwaite@touchnetix.com>
  *            Pedro Torruella <pedro.torruella@touchnetix.com>
  *            Bart Prescott <bartp@baasheep.co.uk>
- *            Hannah Rossiter <hannah.rossiter@touchnetix.com> 
+ *            Hannah Rossiter <hannah.rossiter@touchnetix.com>
+ *            Andrew Thomas <andrew.thomas@touchnetix.com> 
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -53,7 +54,7 @@
 			#address-cells = < 0x01 >;
 			#size-cells = < 0x00 >;
 			axiom_spi@0 {
-				compatible = "axiom_spi_drv,axiom";
+				compatible = "axiom_spi,axiom";
 				reg = < 0x00 >; /* nCE0 on GPIO8 (on Pi Header pin 24) */
 				#address-cells = < 0x01 >;
 				#size-cells = < 0x00 >;
@@ -62,6 +63,8 @@
 				interrupt-parent = < &gpio >;
 				interrupts = < 24 8 >; /* <GPIO Flags> Flags: 1 = lo-to-hi, 2 = hi-to-lo, 4 = active high, 8 = active low  */
 				status = "okay";
+				/* axiom,poll-enable; */
+				/* axiom,poll-period = /bits/ 8 <15>; */
 			};
 		};
 	};

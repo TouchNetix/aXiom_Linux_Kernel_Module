@@ -5,18 +5,18 @@
 For first time use, `init_env.sh` compiles the source files and creates kernel objects (`.ko`). The script will then load the specified kernel module.
 
 ```bash
-sudo ./init_env.sh [usb/spi/i2c]
+sudo ./init_env.sh [spi/i2c]
 ```
 
 The `installmodule.sh` script will unload any previously loaded aXiom modules before loading the specified kernel module.
 
 ```bash
-sudo ./installmodule.sh [usb/spi/i2c]
+sudo ./installmodule.sh [spi/i2c]
 ```
 
 ## Description
 
-The aXiom Linux Kernel module is a driver used to interface aXiom devices with the Linux Input Subsystem. It decodes u41 target reports and u46 force reports received from and converts the reports into messages for the Linux input subsystem. The reports can be read from aXiom via I2C, SPI or USB (TouchNetix protocol bridge). All aXiom are recieved by the kernel module, however only u41 and u46 are processed. All other reports are logged in `dmesg`.
+The aXiom Linux Kernel module is a driver used to interface aXiom devices with the Linux Input Subsystem. It decodes u41 target reports and u46 force reports received from and converts the reports into messages for the Linux input subsystem. The reports can be read from aXiom via I2C or SPI. All aXiom are recieved by the kernel module, however only u41 and u46 are processed. All other reports are logged in `dmesg`.
 
 ## Prerequisites
 
@@ -40,9 +40,7 @@ This driver has been tested with Kernels versions 5.04, 5.11, and 5.15.
 This has been tested in the following systems:
 
 * Raspberry Pi (3 and 4)
-  * I2C, SPI, and USB have been tested
-* x86 PC (in a VirtualBox virtual machine)
-  * Only USB has been tested using USB passthrough
+  * I2C and SPI have been tested
 
 ## Software Repository
 
@@ -52,8 +50,6 @@ In this repository you will find:
 * axiom_core.h
 * axiom_i2c.c
 * axiom_spi.c
-* axiom_usb.c
-* axiom_usb.h
 * axiom_i2c_overlay.dts
 * axiom_spi_overlay.dts
 * init_env.sh
@@ -157,7 +153,7 @@ Using the helper script 'init_env.sh' will both compile the files and install th
 
 ```bash
 # As simple as...
-$ ./init_env.sh [usb/spi/i2c]
+$ ./init_env.sh [spi/i2c]
 ```
 
 Please note - if using either of the helper scripts, they need to be given executable permissions.
@@ -170,7 +166,7 @@ If `./init_env.sh` was used in the compilation step, the module has already been
 The general flow is as follows:
 
 * Un-load any axiom drivers (if loaded).
-* Load the axiom_usb_drv, axiom_spi_drv or axiom_i2c_drv module depending on your application.
+* Load the axiom_spi_drv or axiom_i2c_drv module depending on your application.
 
 This can be done from the command line using the following instructions, or using one of the provided helper scripts.
 
@@ -179,10 +175,10 @@ To manually install:
 ```bash
 # Make sure to run as root or by using "sudo" as necessary
 # unload any pre-existing axiom modules
-$ sudo rmmod axiom_usb_drv.ko; sudo rmmod axiom_spi_drv.ko; sudo rmmod axiom axiom_i2c_drv.ko
+$ sudo rmmod axiom_spi_drv.ko; sudo rmmod axiom axiom_i2c_drv.ko
 
 # load the recently compiled modules:
-$ sudo insmod axiom_usb.ko
+$ sudo insmod axiom_spi_drv.ko
 
 # You can see any messages from the driver via dmesg:
 $ sudo dmesg -w
@@ -192,35 +188,8 @@ Using the helper script:
 
 ```bash
 # unloads any loaded axiom modules, then loads the specified module including any associated device tree overlays
-$ sudo ./installmodule.sh [usb/spi/i2c]
+$ sudo ./installmodule.sh [spi/i2c]
 ```
-
-## Notes on different communication methods
-
-### USB
-
-The USB driver is fairly distributed, due to the fact that USB transactions are
-handled via IRQ's. This means we need to make use of different kernel features in
-order to avoid locking the kernel during an IRQ, by means of a blocking call.
-
-This is the order of events when a device is plugged-in:
-
-* Probe is called: Memory is allocated, a "workqueue" is initialized and "work" item is created and queued.
-* The work function kicks in: Device info is retrieved, bridge is put into proxy mode.
-* USB Raw events starts creating input-sub-system events.
-
-When a device is unplugged all the different structures are cleaned-up.
-
-#### Workqueue Item
-
-In order to support the blocking nature of hid_hw_output_report and also to allow
-waiting for responses to come back from the bridge, a separate "workqueue" process
-is spawned during probe. This allows a separate process to run at the Kernel's leisure
-and not within an IRQ context as probe/remove/et-al do.
-
-#### USB Notes
-
-To interface with the provided kernel module, the aXiom usb bridge must be set to 'basic' mode - digitiser mode will cause the device to be registered with the input subsystem as a hid-multitouch device and information will not be processed by the driver.
 
 ### I2C
 
@@ -268,7 +237,7 @@ available to consume.
 ### Report Processing
 
 * When a report is received and ready to be consumed, an interrupt will notify the system.
-  * The information held in the report is read by the selected comms method - the process varies between USB, I2C, and SPI
+  * The information held in the report is read by the selected comms method - the process varies between I2C and SPI
 * Before the report is processed, the information held in the report is validated
   * Length - reports with zero length are discarded.
   * CRC - the CRC of the report is calculated and compared to the CRC calculated by aXiom. If they do not match, the report is discarded.
@@ -276,22 +245,6 @@ available to consume.
   * u41 reports are always processed, with the touch data sent to the input subsystem
   * u46 reports are processed if the setting is enabled in 'axiom_core.h' and the raw force data sent to the input subsystem
   * Other reports are not processed, but the raw report data is printed as a 'dev_info' message
-
-### Device Removal
-
-When the device is disconnected or the module is removed, the following steps occur:
-
-* IRQ's are freed
-* Memory allocated for the usage table is deallocated
-  * This also depopulates the usage table
-* The device is unregistered from the Input Subsystem
-
-#### USB Removal
-
-Removal of a USB device has some additional steps:
-
-* The bridge is taken out of proxy mode
-* The workqueue is cancelled, flushed, and destroyed
 
 ## Reports
 
@@ -331,7 +284,7 @@ It must be noted that force values can be positive or negative, however the repo
 
 ## Interfacing with aXiom Facilities Code
 
-A selection of python helper scripts have been developed by TouchNetix which can be used in a non-Windows environment. These scripts allow for basic interfacing with the aXiom device such as loading device configurations or firmware versions. With the kernel module installed, these scripts can be run when using USB and I2C, however not with SPI. Despite USB and I2C working, it is not recommended to be upgrading firmware or configurations 'on the fly'.
+A selection of python helper scripts have been developed by TouchNetix which can be used in a non-Windows environment. These scripts allow for basic interfacing with the aXiom device such as loading device configurations or firmware versions. With the kernel module installed, these scripts can be run when using I2C, SPI or USB. Despite USB and I2C working, it is not recommended to be upgrading firmware or configurations 'on the fly'.
 
 ### Available Scripts
 

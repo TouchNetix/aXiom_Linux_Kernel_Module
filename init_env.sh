@@ -5,7 +5,7 @@
 # This script also makes sure the other scripts are marked executable.
 #
 # Usage:
-#		./init_env.sh [usb/spi/i2c]
+#		./init_env.sh [spi/i2c]
 #
 
 echo Compiling source...
